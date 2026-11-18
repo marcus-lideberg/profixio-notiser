@@ -1,87 +1,46 @@
 # Lägg filen som .github/workflows/watch.yml i ett PUBLIKT GitHub-repo (ger obegränsade gratis-minuter).
-
 # Lägg till hemligheten NTFY_TOPIC under Settings > Secrets and variables > Actions.
-
 name: Bevaka Profixio
 
-
-
 on:
-
   schedule:
-
     - cron: "*/10 5-18 * * *"     # var 10:e minut, ca 06-19/20 svensk tid (UTC)
-
   workflow_dispatch:               # så du kan starta manuellt
 
-
-
 concurrency:
-
   group: profixio-watch
-
   cancel-in-progress: false
 
-
-
 jobs:
-
   watch:
-
     runs-on: ubuntu-latest
-
     timeout-minutes: 200
-
     steps:
-
       - uses: actions/checkout@v6
-
       - uses: actions/setup-python@v6
-
         with:
-
           python-version: "3.12"
-
+      - name: Skapa datamapp
+        run: mkdir -p data
       - uses: actions/cache/restore@v5
-
         with:
-
           path: data/state.json
-
           key: state-${{ github.run_id }}
-
           restore-keys: state-
-
       - name: Kör bevakning
-
         env:
-
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-
           STATE_DIR: data
-
         run: python profixio_watch.py --ci
-
       - uses: actions/cache/save@v5
-
         if: always()
-
         with:
-
           path: data/state.json
-
           key: state-${{ github.run_id }}
-
       - uses: actions/upload-artifact@v6
-
         if: always()
-
         with:
-
           name: snapshots
-
           path: data/snapshots
-
           retention-days: 7
-
           if-no-files-found: ignore
