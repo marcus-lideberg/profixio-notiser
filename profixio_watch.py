@@ -423,7 +423,7 @@ def team_check(st, t, name, url):
 
 def save(st):
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(st, ensure_ascii=False, indent=1), "utf-8")
+    save(st)
 
 
 def load():
