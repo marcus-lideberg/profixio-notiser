@@ -423,7 +423,7 @@ def team_check(st, t, name, url):
 
 def save(st):
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    save(st)
+    STATE_FILE.write_text(json.dumps(st, ensure_ascii=False, indent=1), "utf-8")
 
 
 def load():
@@ -460,6 +460,7 @@ def cycle(st):
 
 def main():
     args = sys.argv[1:]
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     first_run = not STATE_FILE.exists()
     st = load()
     if "--scan" in args:
