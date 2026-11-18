@@ -44,7 +44,7 @@ BEFORE, AFTER, LATE = timedelta(minutes=15), timedelta(minutes=120), timedelta(h
 HERE = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("STATE_DIR", HERE))
 STATE_FILE, SNAP_DIR = DATA / "state.json", DATA / "snapshots"
-UA = "profixio-watch/2.0 (privat bevakning av två lag)"
+UA = "Mozilla/5.0 (compatible; profixio-watch/2.0; privat bevakning av två lag)"
 DEBUG = "--debug" in sys.argv
 
 
@@ -59,7 +59,9 @@ def parse_dt(s):
 
 
 def fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    req = urllib.request.Request(url, headers={
+        "User-Agent": UA, "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "sv-SE,sv;q=0.9,en;q=0.8"})
     with urllib.request.urlopen(req, timeout=30) as r:
         html = r.read().decode("utf-8", "replace")
     p = Page()
@@ -234,6 +236,10 @@ def snapshot(mid, p, prev_hash):
     return h
 
 
+class Blocked(Exception):
+    """Profixio nekar anropet (403/429 eller spärrsida)."""
+
+
 def not_ours(st, mid):
     if mid not in st["notours"]:
         st["notours"].append(mid)
@@ -246,12 +252,17 @@ def poll(mid, st, t):
     try:
         p = fetch(f"{BASE}/app/lx/match/{mid}")
     except Exception as e:
-        if getattr(e, "code", None) in (403, 404, 410):
+        code = getattr(e, "code", None)
+        if code in (404, 410):
             not_ours(st, mid)
+        elif code in (401, 403, 429):
+            raise Blocked(f"HTTP {code}")
         else:
             print(f"Match {mid}: {e}", file=sys.stderr)
         return
     cur = parse_match(p)
+    if not cur and "profixio" not in p.raw.lower():
+        raise Blocked("spärrsida (200 utan Profixio-innehåll)")
     if not cur or not ours(cur):
         if mid in SEED_IDS and not cur:
             print(f"Match {mid}: kunde inte tolka sidan", file=sys.stderr)
@@ -353,9 +364,15 @@ def scan(st, radius):
     todo = sorted({i for s in seeds for i in range(s - radius, s + radius + 1)}
                   - set(st["notours"]) - set(st["ids"]))
     print(f"Söker i {len(todo)} sidor (cirka {len(todo) // 60 + 1} min) ...")
+    blocked = 0
     for n, mid in enumerate(todo, 1):
         try:
             poll(mid, st, now())
+        except Blocked as e:
+            blocked += 1
+            if blocked >= 5:
+                print(f"Profixio blockerar anropen ({e}). Sökningen avbröts.", file=sys.stderr)
+                return False
         except Exception as e:
             print(f"Match {mid}: {e}", file=sys.stderr)
         time.sleep(1)
@@ -363,6 +380,7 @@ def scan(st, radius):
             save(st)
             print(f"  {n}/{len(todo)}  hittade {len(st['ids'])} matcher för dina lag")
     print(f"Klart: {len(st['ids'])} matcher hittade.")
+    return True
 
 
 # ---------- Lagsidor: schemaändringar, nya matcher, reserv för resultat ----------
@@ -471,18 +489,21 @@ def main():
     if "--ci" in args:                            # GitHub Actions: en körning, loopar under matchtid
         deadline = time.time() + 170 * 60
         if first_run:
+            if not scan(st, 200):                 # blockerad: spara inget, misslyckas tydligt
+                print("Avbryter: Profixio släpper inte in den här servern.", file=sys.stderr)
+                sys.exit(1)
             try:
                 notify("Profixio-bevakning", "Igång för: " + ", ".join(TEAMS))
             except Exception as e:
                 print(f"ntfy: {e}", file=sys.stderr)
-            scan(st, 200)
             st["last_scan"] = now().isoformat()
+            save(st)
         while True:
             active = cycle(st)
             ls = st.get("last_scan")
             if not active and (not ls or now() - datetime.fromisoformat(ls) > timedelta(days=7)):
-                scan(st, 200)
-                st["last_scan"] = now().isoformat()
+                ok = scan(st, 200)
+                st["last_scan"] = (now() if ok else now() - timedelta(days=6)).isoformat()
             save(st)
             if not active or time.time() > deadline:
                 return
@@ -493,8 +514,8 @@ def main():
                 notify("Profixio-bevakning", "Igång för: " + ", ".join(TEAMS))
             except Exception as e:
                 print(f"ntfy: {e}", file=sys.stderr)
-            scan(st, 200)                         # hittar matcher automatiskt, tar ca 10 min
-            st["last_scan"] = now().isoformat()
+            ok = scan(st, 200)                    # hittar matcher automatiskt, tar ca 10 min
+            st["last_scan"] = (now() if ok else now() - timedelta(days=6)).isoformat()
             save(st)
         while True:
             active = False
@@ -502,8 +523,8 @@ def main():
                 active = cycle(st)
                 ls = st.get("last_scan")
                 if not active and (not ls or now() - datetime.fromisoformat(ls) > timedelta(days=7)):
-                    scan(st, 200)                 # veckovis: hitta nya matcher
-                    st["last_scan"] = now().isoformat()
+                    ok = scan(st, 200)            # veckovis: hitta nya matcher
+                    st["last_scan"] = (now() if ok else now() - timedelta(days=6)).isoformat()
                 save(st)
             except Exception as e:
                 print(f"Fel: {e}", file=sys.stderr)
