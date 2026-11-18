@@ -360,7 +360,7 @@ def scan(st, radius):
             print(f"Match {mid}: {e}", file=sys.stderr)
         time.sleep(1)
         if n % 25 == 0:
-            STATE_FILE.write_text(json.dumps(st, ensure_ascii=False, indent=1), "utf-8")
+            save(st)
             print(f"  {n}/{len(todo)}  hittade {len(st['ids'])} matcher för dina lag")
     print(f"Klart: {len(st['ids'])} matcher hittade.")
 
